@@ -1,0 +1,96 @@
+Étapes à Suivre
+
+    Provisionner les ressources initiales avec Terraform.
+    Déclencher la pipeline Jenkins avec un provisioner local-exec.
+    Utiliser une boucle de vérification pour s'assurer que la pipeline Jenkins est terminée avant de continuer avec les étapes suivantes.
+
+Exemple de Configuration Terraform
+
+    Provisionner les ressources initiales et déclencher la pipeline Jenkins :
+
+hcl
+
+provider "aws" {
+  region = "us-west-2"
+}
+
+resource "aws_instance" "example" {
+  ami           = "ami-12345678"
+  instance_type = "t2.micro"
+
+  tags = {
+    Name = "example-instance"
+  }
+}
+
+output "instance_ip" {
+  value = aws_instance.example.public_ip
+}
+
+resource "null_resource" "trigger_jenkins_job" {
+  depends_on = [aws_instance.example]
+
+  provisioner "local-exec" {
+    command = "curl -X POST 'http://your-jenkins-server/job/your-job/buildWithParameters?token=your_token&INSTANCE_IP=${aws_instance.example.public_ip}' --user 'username:api-token'"
+  }
+}
+
+    Ajouter une ressource null_resource pour vérifier l'état de la pipeline Jenkins :
+
+hcl
+
+resource "null_resource" "wait_for_jenkins" {
+  depends_on = [null_resource.trigger_jenkins_job]
+
+  provisioner "local-exec" {
+    command = <<EOT
+    #!/bin/bash
+
+    JENKINS_JOB_URL="http://your-jenkins-server/job/your-job"
+    JENKINS_USER="username"
+    JENKINS_API_TOKEN="api-token"
+    
+    # Function to check the status of the Jenkins job
+    check_jenkins_job() {
+      BUILD_STATUS=$(curl -s -u ${JENKINS_USER}:${JENKINS_API_TOKEN} ${JENKINS_JOB_URL}/lastBuild/api/json | jq -r .result)
+      echo ${BUILD_STATUS}
+    }
+
+    # Wait until the Jenkins job is finished
+    while true; do
+      STATUS=$(check_jenkins_job)
+      if [[ "${STATUS}" == "SUCCESS" ]]; then
+        echo "Jenkins job completed successfully."
+        exit 0
+      elif [[ "${STATUS}" == "FAILURE" ]]; then
+        echo "Jenkins job failed."
+        exit 1
+      fi
+      echo "Waiting for Jenkins job to complete..."
+      sleep 30
+    done
+    EOT
+  }
+}
+
+# Your dependent resource
+resource "aws_s3_bucket" "example_bucket" {
+  depends_on = [null_resource.wait_for_jenkins]
+
+  bucket = "my-example-bucket"
+  acl    = "private"
+}
+
+Explication
+
+    Provisionner les instances : La première partie du script provisionne les instances EC2 et déclenche la pipeline Jenkins.
+    Attendre la fin de la pipeline Jenkins : Utilisez un null_resource avec un provisioner local-exec pour vérifier le statut de la dernière build de la pipeline Jenkins en boucle.
+        check_jenkins_job : Cette fonction vérifie le statut de la dernière build de la pipeline Jenkins en utilisant l'API Jenkins.
+        Boucle de vérification : La boucle vérifie toutes les 30 secondes si le job Jenkins est terminé (statut SUCCESS ou FAILURE). Si le job est terminé, la boucle se termine et permet à Terraform de continuer.
+
+Notes
+
+    Sécurité : Assurez-vous de sécuriser vos informations d'identification Jenkins (utilisateur et token) en les stockant de manière sécurisée, par exemple, en utilisant des variables d'environnement ou des variables Terraform sensibles.
+    Timeout : Vous pouvez ajouter un mécanisme de timeout pour éviter que la boucle ne tourne indéfiniment en cas de problème avec le job Jenkins.
+
+Avec cette approche, vous pouvez coordonner les étapes Terraform et Jenkins de manière sécurisée et fiable sans avoir besoin de webhooks ou d'intégrations externes complexes.
