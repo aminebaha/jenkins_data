@@ -1,0 +1,87 @@
+# Utiliser une image de base légère et sécurisée
+FROM ubuntu:20.04
+
+# Définir les variables d'environnement nécessaires
+ENV ELASTIC_VERSION=7.14.0
+ENV ELASTIC_TARBALL="elasticsearch-$ELASTIC_VERSION-linux-x86_64.tar.gz"
+ENV ELASTIC_URL="https://artifacts.elastic.co/downloads/elasticsearch/$ELASTIC_TARBALL"
+ENV ELASTIC_HOME=/usr/share/elasticsearch
+ENV PATH=$ELASTIC_HOME/bin:$PATH
+
+# Installer les dépendances nécessaires
+RUN apt-get update && \
+    apt-get install -y wget gnupg2 apt-transport-https && \
+    apt-get install -y openjdk-11-jdk && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        netcat \
+        unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Ajouter un utilisateur non-root pour exécuter Elasticsearch
+RUN groupadd -g 1000 elasticsearch && \
+    useradd -u 1000 -g elasticsearch -s /bin/bash -m elasticsearch
+
+# Télécharger et installer Elasticsearch
+RUN wget $ELASTIC_URL && \
+    tar -xzf $ELASTIC_TARBALL && \
+    mv elasticsearch-$ELASTIC_VERSION $ELASTIC_HOME && \
+    rm $ELASTIC_TARBALL && \
+    chown -R elasticsearch:elasticsearch $ELASTIC_HOME
+
+# Copier le fichier de configuration (optionnel si vous avez des configurations personnalisées)
+# COPY elasticsearch.yml $ELASTIC_HOME/config/elasticsearch.yml
+
+# Configurer le certificat SSL
+COPY --chown=elasticsearch:elasticsearch certs/ $ELASTIC_HOME/config/certs/
+
+# Changer l'utilisateur pour `elasticsearch`
+USER elasticsearch
+
+# Exposer les ports nécessaires
+EXPOSE 9200 9300
+
+# Définir le point d'entrée
+ENTRYPOINT ["elasticsearch"]
+
+-------------------------------------------------------------------------------------------------------------------------
+version: '3.8'
+services:
+  elasticsearch:
+    image: your_dockerhub_username/custom-elasticsearch:7.14.0
+    container_name: ${NODE_NAME}
+    environment:
+      - node.name=${NODE_NAME}
+      - node.master=${NODE_MASTER}
+      - node.data=${NODE_DATA}
+      - node.ingest=${NODE_INGEST}
+      - cluster.name=${CLUSTER_NAME}
+      - discovery.seed_hosts=es01,es02,es03
+      - cluster.initial_master_nodes=es01,es02,es03
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms${MEMORY_LIMIT} -Xmx${MEMORY_LIMIT}"
+      - xpack.security.enabled=true
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.security.transport.ssl.keystore.path=/usr/share/elasticsearch/config/certs/elastic-certificates.p12
+      - xpack.security.transport.ssl.truststore.path=/usr/share/elasticsearch/config/certs/elastic-certificates.p12
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - data:/usr/share/elasticsearch/data
+      - ${CERTS_DIR}:/usr/share/elasticsearch/config/certs
+    ports:
+      - 9200:9200
+      - 9300:9300
+    networks:
+      - elastic
+
+volumes:
+  data:
+
+networks:
+  elastic:
+    driver: bridge
