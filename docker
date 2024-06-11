@@ -1,0 +1,69 @@
+---
+- name: Install Docker from custom source
+  hosts: all
+  become: yes
+  gather_facts: no  # On ne récupère pas les faits car nous n'en avons pas besoin
+
+  tasks:
+    - name: Download Docker ZIP from Nexus
+      get_url:
+        url: "http://nexus.example.com/path/to/docker.zip"
+        dest: "/tmp/docker.zip"
+
+    - name: Extract Docker ZIP
+      unarchive:
+        src: "/tmp/docker.zip"
+        dest: "/tmp/docker-extracted"
+        remote_src: yes  # Extrait le fichier sur le nœud distant
+
+    - name: Install Docker RPMs
+      loop:
+        - docker-ce.rpm
+        - docker-ce-cli.rpm
+        - containerd.io.rpm
+      package:
+        name: "/tmp/docker-extracted/{{ item }}"
+        state: present
+-----------------------------------------
+---
+- name: Install Docker from custom source
+  hosts: all
+  become: yes
+  gather_facts: no
+
+  tasks:
+    - name: Download Docker ZIP from Nexus
+      get_url:
+        url: "http://nexus.example.com/path/to/docker.zip"
+        dest: "/tmp/docker.zip"
+      register: download_result
+      failed_when: download_result.rc != 0
+
+    - name: Extract Docker ZIP
+      unarchive:
+        src: "/tmp/docker.zip"
+        dest: "/tmp/docker-extracted"
+        remote_src: yes
+      register: extract_result
+      failed_when: extract_result.rc != 0
+
+    - name: Install Docker RPMs
+      loop:
+        - docker-ce.rpm
+        - docker-ce-cli.rpm
+        - containerd.io.rpm
+      package:
+        name: "{{ item }}"
+        state: present
+      when: item not in ansible_facts.packages  # Vérifie si le paquet est déjà installé
+      register: install_result
+      failed_when: install_result.rc != 0
+
+  handlers:
+    - name: Clean up temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "/tmp/docker.zip"
+        - "/tmp/docker-extracted"
