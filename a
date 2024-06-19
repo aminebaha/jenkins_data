@@ -1,0 +1,39 @@
+#!/bin/bash
+set -e
+
+# Démarrer Elasticsearch en arrière-plan
+/elasticsearch/bin/elasticsearch &
+
+# Attendre qu'Elasticsearch soit disponible
+until curl -s http://localhost:9200/_cluster/health | grep -q '"status":"green"\|"status":"yellow"'; do
+  echo "Waiting for Elasticsearch to start..."
+  sleep 5
+done
+
+# Créer le dépôt de snapshots
+curl -X PUT "http://localhost:9200/_snapshot/my_repository" -H 'Content-Type: application/json' -d '
+{
+  "type": "fs",
+  "settings": {
+    "location": "/path/to/your/snapshot/directory"
+  }
+}'
+
+# Créer la politique SLM
+curl -X PUT "http://localhost:9200/_slm/policy/my_snapshot_policy" -H 'Content-Type: application/json' -d '
+{
+  "schedule": "0 */1 * * * ?",
+  "name": "<snapshot-{now/d{yyyy.MM.dd-HH.mm}}>",
+  "repository": "my_repository",
+  "config": {
+    "indices": ["*"]
+  },
+  "retention": {
+    "expire_after": "1d",
+    "min_count": 1,
+    "max_count": 1000
+  }
+}'
+
+# Mettre en avant-plan Elasticsearch pour que le conteneur reste actif
+wait
