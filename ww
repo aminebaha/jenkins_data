@@ -1,0 +1,35 @@
+name: Create Pull Request from Develop to Main
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  createPR:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Get repository details
+        id: repo-info
+        run: |
+          echo "labels=$(gh api repos/${{ github.repository }}/labels --jq '.[].name' | jq -R -s -c 'join(",")')" >> $GITHUB_ENV
+          echo "assignees=$(gh api repos/${{ github.repository }}/assignees --jq '.[].login' | jq -R -s -c 'join(",")')" >> $GITHUB_ENV
+          echo "reviewers=$(gh api repos/${{ github.repository }}/collaborators --jq '.[].login' | jq -R -s -c 'join(",")')" >> $GITHUB_ENV
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          branch: develop
+          base: main
+          commit-message: Automated changes from develop to main
+          title: "Pull Request: Merge develop into main"
+          body: |
+            This pull request has been automatically generated to merge develop into main.
+          labels: ${{ env.labels }}
+          assignees: ${{ env.assignees }}
+          reviewers: ${{ env.reviewers }}
+          team-reviewers: my-team1,my-team2  # Replace with your actual team names
