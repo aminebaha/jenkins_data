@@ -85,3 +85,56 @@ volumes:
 networks:
   elastic:
     driver: bridge
+
+
+-----------------
+
+
+
+
+import os
+import time
+import jenkins
+
+# Charger les variables d'environnement
+jenkins_url = os.getenv('JENKINS_URL')
+jenkins_user = os.getenv('JENKINS_USER')
+jenkins_api_token = os.getenv('JENKINS_API_TOKEN')
+jenkins_job_name = os.getenv('JENKINS_JOB_NAME')
+
+# Connexion à Jenkins
+server = jenkins.Jenkins(jenkins_url, username=jenkins_user, password=jenkins_api_token)
+
+# Déclencher le job et obtenir l'ID dans la queue
+try:
+    queue_id = server.build_job(jenkins_job_name)
+    print(f"Job '{jenkins_job_name}' déclenché avec succès. ID dans la file d'attente : {queue_id}")
+
+    # Attendre que Jenkins démarre le build (lié à la queue ID)
+    build_number = None
+    while build_number is None:
+        # Obtenir le numéro de build à partir de l'ID de la queue
+        queue_info = server.get_queue_item(queue_id)
+
+        if 'executable' in queue_info:  # Vérifier si le build a démarré
+            build_number = queue_info['executable']['number']
+            print(f"Le job a démarré. Numéro du build : {build_number}")
+        else:
+            print("Le job est toujours en file d'attente...")
+            time.sleep(5)  # Attendre 5 secondes avant de vérifier à nouveau
+
+    # Suivre le build jusqu'à la fin
+    build_info = server.get_build_info(jenkins_job_name, build_number)
+    while build_info['building']:
+        print("Le build est encore en cours...")
+        time.sleep(10)  # Attendre 10 secondes avant de vérifier à nouveau
+        build_info = server.get_build_info(jenkins_job_name, build_number)
+
+    # Le build est terminé
+    result = build_info['result']
+    print(f"Le build est terminé avec le statut : {result}")
+
+except jenkins.JenkinsException as e:
+    print(f"Erreur lors du déclenchement ou du suivi du job : {str(e)}")
+
+
