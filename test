@@ -1,0 +1,82 @@
+import requests
+import json
+
+# Configuration
+HARBOR_URL = "https://<harbor-instance>"
+USERNAME = "<username>"
+PASSWORD = "<password>"
+PROJECT_NAME = "<project_name>"
+
+# Authentification à Harbor
+def get_harbor_token():
+    response = requests.get(f"{HARBOR_URL}/api/v2.0/users/login", auth=(USERNAME, PASSWORD))
+    if response.status_code == 200:
+        print("Authenticated successfully.")
+        return response.cookies  # Utilisation des cookies pour les appels API suivants
+    else:
+        raise Exception("Authentication failed: ", response.text)
+
+# Liste des repositories dans le projet
+def get_repositories(cookies):
+    url = f"{HARBOR_URL}/api/v2.0/projects/{PROJECT_NAME}/repositories"
+    response = requests.get(url, cookies=cookies)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception("Failed to fetch repositories: ", response.text)
+
+# Liste des artifacts (images/tags) dans un repository donné
+def get_artifacts(repository_name, cookies):
+    url = f"{HARBOR_URL}/api/v2.0/projects/{PROJECT_NAME}/repositories/{repository_name}/artifacts"
+    response = requests.get(url, cookies=cookies)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"Failed to fetch artifacts for repository {repository_name}: ", response.text)
+
+# Vérification des vulnérabilités pour un artifact spécifique
+def check_vulnerabilities(repository_name, artifact_digest, cookies):
+    url = f"{HARBOR_URL}/api/v2.0/projects/{PROJECT_NAME}/repositories/{repository_name}/artifacts/{artifact_digest}/additions/vulnerabilities"
+    response = requests.get(url, cookies=cookies)
+    if response.status_code == 200:
+        vulnerabilities = response.json()
+        if 'vulnerability' in vulnerabilities and 'severity' in vulnerabilities['vulnerability']:
+            return vulnerabilities['vulnerability']['severity'] == 'Critical'
+    return False
+
+# Main function
+def main():
+    cookies = get_harbor_token()
+
+    repositories = get_repositories(cookies)
+    critical_images = []
+    pullable_images = []
+
+    for repo in repositories:
+        repo_name = repo['name']
+        artifacts = get_artifacts(repo_name, cookies)
+        
+        for artifact in artifacts:
+            digest = artifact['digest']
+            print(f"Checking repository: {repo_name}, artifact: {digest}")
+
+            # Vérifier si l'image est critique
+            is_critical = check_vulnerabilities(repo_name, digest, cookies)
+
+            # Si l'image est critique, elle ne peut pas être pullée
+            if is_critical:
+                critical_images.append(f"{repo_name}@{digest}")
+            else:
+                pullable_images.append(f"{repo_name}@{digest}")
+
+    # Résultats
+    print("\nImages en état critique (non pullables):")
+    for img in critical_images:
+        print(img)
+
+    print("\nImages pullables:")
+    for img in pullable_images:
+        print(img)
+
+if __name__ == "__main__":
+    main()
