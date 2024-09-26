@@ -1,82 +1,53 @@
-import requests
-import json
+from kubernetes import client, config
+import re
 
-# Configuration
-HARBOR_URL = "https://<harbor-instance>"
-USERNAME = "<username>"
-PASSWORD = "<password>"
-PROJECT_NAME = "<project_name>"
+# Charger la configuration Kubernetes (assurez-vous que le contexte est correct)
+config.load_kube_config()
 
-# Authentification à Harbor
-def get_harbor_token():
-    response = requests.get(f"{HARBOR_URL}/api/v2.0/users/login", auth=(USERNAME, PASSWORD))
-    if response.status_code == 200:
-        print("Authenticated successfully.")
-        return response.cookies  # Utilisation des cookies pour les appels API suivants
-    else:
-        raise Exception("Authentication failed: ", response.text)
+# Définir une fonction pour récupérer les déploiements et les tags d'images
+def get_deployment_image_tags(namespaces, previous_revisions=5):
+    v1_apps = client.AppsV1Api()
 
-# Liste des repositories dans le projet
-def get_repositories(cookies):
-    url = f"{HARBOR_URL}/api/v2.0/projects/{PROJECT_NAME}/repositories"
-    response = requests.get(url, cookies=cookies)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        raise Exception("Failed to fetch repositories: ", response.text)
-
-# Liste des artifacts (images/tags) dans un repository donné
-def get_artifacts(repository_name, cookies):
-    url = f"{HARBOR_URL}/api/v2.0/projects/{PROJECT_NAME}/repositories/{repository_name}/artifacts"
-    response = requests.get(url, cookies=cookies)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        raise Exception(f"Failed to fetch artifacts for repository {repository_name}: ", response.text)
-
-# Vérification des vulnérabilités pour un artifact spécifique
-def check_vulnerabilities(repository_name, artifact_digest, cookies):
-    url = f"{HARBOR_URL}/api/v2.0/projects/{PROJECT_NAME}/repositories/{repository_name}/artifacts/{artifact_digest}/additions/vulnerabilities"
-    response = requests.get(url, cookies=cookies)
-    if response.status_code == 200:
-        vulnerabilities = response.json()
-        if 'vulnerability' in vulnerabilities and 'severity' in vulnerabilities['vulnerability']:
-            return vulnerabilities['vulnerability']['severity'] == 'Critical'
-    return False
-
-# Main function
-def main():
-    cookies = get_harbor_token()
-
-    repositories = get_repositories(cookies)
-    critical_images = []
-    pullable_images = []
-
-    for repo in repositories:
-        repo_name = repo['name']
-        artifacts = get_artifacts(repo_name, cookies)
+    # Parcourir chaque namespace donné
+    for namespace in namespaces:
+        print(f"Namespace: {namespace}")
         
-        for artifact in artifacts:
-            digest = artifact['digest']
-            print(f"Checking repository: {repo_name}, artifact: {digest}")
+        # Lister les déploiements dans le namespace
+        deployments = v1_apps.list_namespaced_deployment(namespace)
+        
+        # Parcourir chaque déploiement
+        for deploy in deployments.items:
+            deployment_name = deploy.metadata.name
+            
+            # Rechercher les containers qui suivent la règle (nom du container == deployment sans "-app")
+            expected_container_name = deployment_name.replace("-app", "")
+            for container in deploy.spec.template.spec.containers:
+                if re.match(expected_container_name, container.name):
+                    image = container.image
+                    image_tag = image.split(":")[-1] if ":" in image else "latest"
+                    print(f"Deployment: {deployment_name}, Container: {container.name}, Active Image Tag: {image_tag}")
+                    
+                    # Récupérer les révisions précédentes
+                    print(f"Fetching last {previous_revisions} image tags for deployment {deployment_name}")
+                    replica_sets = v1_apps.list_namespaced_replica_set(namespace)
+                    
+                    # Filtrer les ReplicaSets liés à ce déploiement et les trier par révision
+                    related_replica_sets = [
+                        rs for rs in replica_sets.items if rs.metadata.owner_references and 
+                        any(ref.kind == "Deployment" and ref.name == deployment_name for ref in rs.metadata.owner_references)
+                    ]
+                    
+                    # Trier par révision (annotation kubernetes.io/change-cause ou autre méthode)
+                    related_replica_sets.sort(key=lambda rs: int(rs.metadata.annotations.get("deployment.kubernetes.io/revision", "0")), reverse=True)
+                    
+                    # Limiter à N révisions et récupérer les images
+                    for i, rs in enumerate(related_replica_sets[:previous_revisions]):
+                        prev_image = rs.spec.template.spec.containers[0].image
+                        prev_image_tag = prev_image.split(":")[-1] if ":" in prev_image else "latest"
+                        print(f"  Previous Revision {i+1}: {prev_image_tag}")
+                    
+                    print("-" * 50)
 
-            # Vérifier si l'image est critique
-            is_critical = check_vulnerabilities(repo_name, digest, cookies)
-
-            # Si l'image est critique, elle ne peut pas être pullée
-            if is_critical:
-                critical_images.append(f"{repo_name}@{digest}")
-            else:
-                pullable_images.append(f"{repo_name}@{digest}")
-
-    # Résultats
-    print("\nImages en état critique (non pullables):")
-    for img in critical_images:
-        print(img)
-
-    print("\nImages pullables:")
-    for img in pullable_images:
-        print(img)
-
-if __name__ == "__main__":
-    main()
+# Utiliser la fonction pour un exemple de liste de namespaces
+namespaces = ['namespace1', 'namespace2']  # Remplacer par les namespaces réels
+get_deployment_image_tags(namespaces, previous_revisions=3)  # Par exemple, récupérer les 3 dernières révisions
