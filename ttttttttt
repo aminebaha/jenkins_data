@@ -1,0 +1,71 @@
+from kubernetes import client, config
+import re
+
+# Charger la configuration Kubernetes (assurez-vous que le contexte est correct)
+config.load_kube_config()
+
+def get_deployment_image_tags(namespaces, previous_revisions=5):
+    v1_apps = client.AppsV1Api()
+    
+    # Créer une liste pour stocker les images
+    image_list = []
+
+    # Parcourir chaque namespace donné
+    for namespace in namespaces:
+        print(f"Namespace: {namespace}")
+
+        # Lister tous les déploiements dans le namespace
+        deployments = v1_apps.list_namespaced_deployment(namespace).items
+        
+        # Lister tous les ReplicaSets dans le namespace une seule fois
+        replica_sets = v1_apps.list_namespaced_replica_set(namespace).items
+        # Créer un dictionnaire pour accéder rapidement aux ReplicaSets
+        rs_dict = {}
+        for rs in replica_sets:
+            if rs.metadata.owner_references:
+                for ref in rs.metadata.owner_references:
+                    if ref.kind == "Deployment":
+                        rs_dict[ref.name] = rs  # Stocker le ReplicaSet par nom de déploiement
+        
+        # Parcourir chaque déploiement
+        for deploy in deployments:
+            deployment_name = deploy.metadata.name
+            
+            # Rechercher les containers qui suivent la règle
+            expected_container_name = deployment_name.replace("-app", "")
+            for container in deploy.spec.template.spec.containers:
+                if re.match(expected_container_name, container.name):
+                    image = container.image
+                    # Ajouter l'image active à la liste
+                    image_list.append({
+                        'Namespace': namespace,
+                        'Deployment': deployment_name,
+                        'Image': image,
+                        'Revision': 'Active'
+                    })
+                    
+                    # Récupérer les révisions précédentes
+                    print(f"Fetching last {previous_revisions} image tags for deployment {deployment_name}")
+
+                    # Trouver le ReplicaSet correspondant
+                    if deployment_name in rs_dict:
+                        rs = rs_dict[deployment_name]
+                        # Limiter à N révisions et récupérer les images
+                        for i in range(min(previous_revisions, len(replica_sets))):
+                            prev_image = rs.spec.template.spec.containers[0].image
+                            image_list.append({
+                                'Namespace': namespace,
+                                'Deployment': deployment_name,
+                                'Image': prev_image,
+                                'Revision': f'Previous Revision {i + 1}'
+                            })
+                    
+                    print("-" * 50)
+
+    # Afficher la liste finale des images
+    for img in image_list:
+        print(f"{img['Namespace']} | {img['Deployment']} | {img['Image']} | {img['Revision']}")
+
+# Utiliser la fonction pour un exemple de liste de namespaces
+namespaces = ['namespace1', 'namespace2']  # Remplacer par les namespaces réels
+get_deployment_image_tags(namespaces, previous_revisions=3)  # Par exemple, récupérer les 3 dernières révisions
