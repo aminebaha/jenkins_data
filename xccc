@@ -1,0 +1,95 @@
+import subprocess
+
+def change_context(context_name):
+    """Change de contexte kubectl si nécessaire."""
+    # Récupère le contexte actuel
+    current_context_command = "kubectl config current-context"
+    result = subprocess.run(current_context_command, shell=True, capture_output=True, text=True)
+    
+    current_context = result.stdout.strip()
+
+    if current_context != context_name:
+        print(f"Changement de contexte vers : {context_name}")
+        change_context_command = f"kubectl config use-context {context_name}"
+        change_result = subprocess.run(change_context_command, shell=True, capture_output=True, text=True)
+        
+        if change_result.returncode != 0:
+            print(f"Erreur lors du changement de contexte : {change_result.stderr}")
+            return False
+    else:
+        print(f"Déjà dans le contexte : {current_context}")
+    return True
+
+def get_deployments_images(namespace, num_previous_revisions=3):
+    """Récupère les déploiements dans un namespace donné et extrait l'image actuelle et les N images précédentes."""
+    command = f"kubectl get deployments -n {namespace} -o json"
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        print(f"Erreur lors de la récupération des déploiements dans le namespace {namespace}")
+        return {}
+
+    deployments = json.loads(result.stdout)
+    deployments_images = {}
+
+    for deployment in deployments['items']:
+        deployment_name = deployment['metadata']['name']
+        print(f"Déploiement : {deployment_name}")
+        
+        containers = deployment['spec']['template']['spec']['containers']
+        current_images = [container['image'] for container in containers]
+        
+        deployments_images[deployment_name] = {
+            "current_image": current_images,
+            "previous_images": []
+        }
+
+        previous_images = get_previous_images(namespace, deployment_name, num_previous_revisions)
+        deployments_images[deployment_name]["previous_images"] = previous_images
+    
+    return deployments_images
+
+def get_previous_images(namespace, deployment_name, num_previous_revisions):
+    """Récupère les N révisions précédentes via kubectl rollout history."""
+    previous_images = []
+
+    command = f"kubectl rollout history deployment/{deployment_name} -n {namespace}"
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"Erreur lors de la récupération des révisions pour le déploiement {deployment_name}")
+        return previous_images
+
+    revisions = result.stdout.split("\n")
+    for revision in revisions:
+        if "image=" in revision:
+            image_line = revision.split("image=")[-1]
+            previous_images.append(image_line.strip())
+
+    return previous_images
+
+def process_namespaces(namespaces, num_previous_revisions=3):
+    """Boucle sur les namespaces et change le contexte si nécessaire."""
+    current_context = None
+
+    for namespace in namespaces:
+        if 'prod' in namespace and current_context != 'prod-context':
+            if change_context('prod-context'):
+                current_context = 'prod-context'
+        elif 'prod' not in namespace and current_context != 'dev-context':
+            if change_context('dev-context'):
+                current_context = 'dev-context'
+
+        # Récupère les images pour le namespace
+        print(f"Traitement du namespace : {namespace}")
+        images_data = get_deployments_images(namespace, num_previous_revisions)
+
+        # Affiche les résultats pour ce namespace
+        for deployment, images in images_data.items():
+            print(f"Déploiement : {deployment}")
+            print(f"Image actuelle : {images['current_image']}")
+            print(f"Images précédentes : {images['previous_images']}")
+
+# Exemple d'utilisation
+namespaces = ['dev-namespace1', 'prod-namespace1', 'prod-namespace2', 'dev-namespace2']
+process_namespaces(namespaces, num_previous_revisions=3)
