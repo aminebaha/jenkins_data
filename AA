@@ -1,3 +1,10 @@
+kubectl get jobs -o jsonpath='{range .items[*]}{.spec.template.spec.containers[*].image}{"\n"}{end}' | sort | uniq -c
+kubectl get cronjobs -o jsonpath='{range .items[*]}{.spec.jobTemplate.spec.template.spec.containers[*].image}{"\n"}{end}' | sort | uniq -c
+
+
+
+
+
 # Utiliser une image de base légère et sécurisée
 FROM ubuntu:20.04
 
