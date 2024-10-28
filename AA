@@ -2,6 +2,11 @@ kubectl get jobs -o jsonpath='{range .items[*]}{.spec.template.spec.containers[*
 kubectl get cronjobs -o jsonpath='{range .items[*]}{.spec.jobTemplate.spec.template.spec.containers[*].image}{"\n"}{end}' | sort | uniq -c
 
 
+for resource in pods jobs cronjobs deployments daemonsets statefulsets replicasets replicationcontrollers; do
+  echo "Images from $resource:"
+  kubectl get $resource --all-namespaces -o jsonpath='{range .items[*]}{.spec.template.spec.containers[*].image}{"\n"}{end}' | sort | uniq -c
+  echo ""
+done
 
 
 
